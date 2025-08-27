@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "ng": "^0.0.0",
+    "ng-recaptcha": "^13.2.1"
+  }
+}

@@ -1,0 +1,35 @@
+<div class="chat-window">
+  <div class="messages" id="messages" #messagesContainer>
+    <div 
+      *ngFor="let message of messages" 
+      class="message"
+      [class.bot]="message.sender === 'bot'"
+      [class.user]="message.sender === 'user'">
+      {{ message.text }}
+    </div>
+    
+    <!-- Typing indicator -->
+    <div class="message bot typing-indicator" *ngIf="isTyping">
+      <span class="typing-dots">
+        <span></span>
+        <span></span>
+        <span></span>
+      </span>
+    </div>
+  </div>
+  
+  <form class="input-area" (ngSubmit)="sendMessage()" #messageForm="ngForm">
+    <input 
+      [(ngModel)]="userMessage" 
+      name="message" 
+      placeholder="Type your message..." 
+      required 
+      [disabled]="isTyping"
+      #messageInput />
+    <button type="submit" id="send-button" aria-label="Send message">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+        </svg>
+      </button>
+  </form>
+</div>

@@ -1,0 +1,83 @@
+<div class="chat-page">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <!-- User Info and Dropdown -->
+    <div class="user-info">
+      <div class="user-header">
+        <h3>👤 {{ username }}</h3>
+         
+        <!-- Top-right dropdown -->
+        <div class="dropdown user-dropdown">
+          <button
+            class="dropdown-toggle"
+            type="button"
+            (click)="toggleUserMenu()"
+            [attr.aria-expanded]="showUserMenu">
+            ⚙️
+          </button>
+          <div class="dropdown-menu" [class.show]="showUserMenu">
+            <h5 class="dropdown-header">User Menu</h5>
+            <ul>
+              <li><a href="#" (click)="$event.preventDefault()">Profile</a></li>
+              <li><a href="#" (click)="$event.preventDefault()">Change Email/Password</a></li>
+              <li><a href="/" class="text-danger">Logout</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+       
+      <button (click)="addNewChat()" class="new-chat-btn">+ New Chat</button>
+    </div>
+     
+    <!-- Chat History -->
+    <div class="chat-history">
+      <h4>🕑 Previous Chats</h4>
+      <ul>
+        <li *ngFor="let chat of chatHistory" 
+            [class.active]="activeChat?.id === chat.id"
+            (click)="!chat.editing && loadChat(chat)">
+           
+          <div class="chat-item">
+            <div class="chat-info" *ngIf="!chat.editing">
+              <span class="chat-title">{{ chat.title }}</span>
+              <small class="last-activity">{{ formatLastActivity(chat.lastActivity) }}</small>
+            </div>
+            
+            <!-- Edit mode -->
+            <input 
+              *ngIf="chat.editing"
+              [(ngModel)]="chat.title"
+              class="chat-title-edit"
+              (keydown)="onKeydownChatTitle($event, chat)"
+              (blur)="saveChat(chat)"
+              #titleInput />
+              
+            <!-- Actions -->
+            <div class="chat-actions" (click)="$event.stopPropagation()">
+              <button 
+                (click)="toggleEdit(chat)"
+                [title]="chat.editing ? 'Cancel' : 'Edit'">
+                {{ chat.editing ? '❌' : '✏️' }}
+              </button>
+              <button 
+                (click)="deleteChat(chat.id)"
+                title="Delete chat"
+                class="delete-btn">
+                🗑️
+              </button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </div>
+   
+  <!-- Main Chat Window -->
+  <div class="chat-content">
+    <div class="chat-header" *ngIf="activeChat">
+      <h2>{{ activeChat.title }}</h2>
+      <small>Last active: {{ formatLastActivity(activeChat.lastActivity) }}</small>
+    </div>
+    <app-chat-window></app-chat-window>
+  </div>
+</div>
