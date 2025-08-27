@@ -230,7 +230,7 @@ async def get_important_emails(
         email_list = []
         for email, classification in important[offset:offset+limit]:
             has_attachments = False
-            if email.id:
+            if email.id and gmail_agent.service:
                 has_attachments = knowledge_graph.check_email_attachments(
                     gmail_agent.service, email.id
                 )
@@ -353,6 +353,58 @@ async def websocket_chat(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         await websocket.close()
+
+# New endpoints for LightRAG-specific operations
+@app.post("/lightrag/add-document")
+async def add_document_to_lightrag(text: str, metadata: Optional[Dict[str, Any]] = None):
+    """Add a document directly to LightRAG"""
+    try:
+        if not knowledge_graph or not knowledge_graph.lightrag:
+            raise HTTPException(status_code=503, detail="LightRAG not initialized")
+        
+        await knowledge_graph.lightrag.add_document(
+            text=text,
+            metadata=metadata or {}
+        )
+        
+        return {"success": True, "message": "Document added to LightRAG"}
+        
+    except Exception as e:
+        logger.error(f"Error adding document to LightRAG: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/lightrag/search")
+async def search_lightrag(query: str, limit: int = 5):
+    """Search LightRAG index"""
+    try:
+        if not knowledge_graph or not knowledge_graph.lightrag:
+            raise HTTPException(status_code=503, detail="LightRAG not initialized")
+        
+        results = await knowledge_graph.lightrag.search(query, limit=limit)
+        return {"results": results, "success": True}
+        
+    except Exception as e:
+        logger.error(f"Error searching LightRAG: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/system/stats")
+async def get_system_stats():
+    """Get system statistics"""
+    try:
+        stats = {
+            "gmail_agent_ready": gmail_agent is not None,
+            "filtering_agent_ready": filtering_agent is not None,
+            "knowledge_graph_ready": knowledge_graph is not None,
+            "rag_anything_ready": knowledge_graph.rag is not None if knowledge_graph else False,
+            "lightrag_ready": knowledge_graph.lightrag is not None if knowledge_graph else False,
+            "sync_status": sync_status,
+            "timestamp": datetime.now().isoformat()
+        }
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting system stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
