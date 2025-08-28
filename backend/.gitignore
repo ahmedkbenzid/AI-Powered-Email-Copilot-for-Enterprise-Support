@@ -1,0 +1,11 @@
+# Google credentials
+backend/credentials.json
+backend/token.pickle
+
+# Env files
+.env
+*.env
+
+# Python cache
+__pycache__/
+*.pyc
