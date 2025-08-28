@@ -10,6 +10,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from agno.agent import Agent
+
 
 class Email(BaseModel):
     """Email data structure using Pydantic"""
@@ -203,6 +205,9 @@ class GmailAgent:
         for msg in messages:
             email = self.get_message_details(msg['id'])
             if email:
+                agent = Agent(
+                    email=email
+                )
                 email_objects.append(email)
         
         return email_objects

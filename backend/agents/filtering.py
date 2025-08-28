@@ -1,174 +1,167 @@
-# filtering_agent.py
-import os
 import json
 import logging
-from typing import Dict, List, Tuple, Optional
-from pydantic import BaseModel, Field
-from agno.agent import Agent
-from agno.models.ollama import Ollama
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+from groq import Groq
 from tenacity import retry, stop_after_attempt, wait_exponential
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class Email(BaseModel):
-    """Email data structure"""
-    subject: str = Field(description="Email subject")
-    sender: str = Field(description="Email sender")
-    body: str = Field(description="Email body content")
-    timestamp: Optional[str] = Field(default=None, description="Email timestamp")
-    id: Optional[str] = Field(default=None, description="Gmail message ID")
 
-class ClassificationResult(BaseModel):
-    """Classification result structure"""
-    classification: str = Field(description="IMPORTANT or NOT_IMPORTANT")
-    topic: str = Field(description="WORK, PERSONAL, or PROMOTIONAL")
-    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
-    reasoning: str = Field(description="Brief explanation for the classification")
+class GroqEmailClassifier:
+    """Email classifier using Groq's ultra-fast LLM inference."""
 
-class FilteringAgent:
-    """Email classifier using Agno with Ollama"""
-
-    def __init__(self, model: str = "llama3.1", base_url: str = "http://localhost:11434"):
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
         """
-        Initialize the Agno classifier with Ollama.
+        Initialize the Groq classifier.
 
         Args:
-            model: Ollama model name
-            base_url: Ollama server URL
+            api_key: Groq API key.
+            model: Groq-supported model name.
         """
-        self.agent = self._create_agent(model, base_url)
-        self.default_response = ClassificationResult(
-            classification="NOT_IMPORTANT",
-            topic="No topic provided",
-            confidence=0.0,
-            reasoning="Classification failed"
-        )
+        if not api_key:
+            raise ValueError("Groq API key is required.")
 
-    def _create_agent(self, model: str, base_url: str) -> Agent:
-        """Create Agno agent for email classification"""
-        return Agent(
-            model=Ollama(model=model, base_url=base_url),
-            response_model=ClassificationResult,
-            description="""You are an expert email classifier. 
+        self.client = Groq(api_key=api_key)
+        self.model = model
+        self.system_prompt = self._create_system_prompt()
+        self.default_response = {
+            "classification": "NOT_IMPORTANT",
+            "topic": "No topic provided",
+            "confidence": 0.0,
+            "reasoning": "Classification failed",
+            "success": False
+        }
 
-The emails belong to a computer science engineer working in an IT company. 
+    def _create_system_prompt(self) -> str:
+        """System prompt for Groq."""
+        return """You are an expert email classifier. Respond STRICTLY in JSON format:
+{
+    "classification": "IMPORTANT" or "NOT_IMPORTANT",
+    "topic": "WORK" or "PERSONAL" or "PROMOTIONAL",
+    "confidence": 0.0-1.0,
+    "reasoning": "Brief explanation"
+}
+
+The emails belong to a computer science engineer working in an IT company.
 
 Topic definitions:
 - WORK: Job-related communications, meetings, projects, company announcements
 - PERSONAL: Personal correspondence, non-work related communications
 - PROMOTIONAL: Marketing emails, newsletters, advertisements, sales pitches
 
-Importance is based on relevance to their work and immediate action required.""",
-            markdown=True
-        )
+Importance is based on relevance to their work and immediate action required.
+"""
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def _classify_email_with_agent(self, email: Email) -> ClassificationResult:
-        """Classify email using Agno agent"""
+    def _call_groq_api(self, user_prompt: str) -> Dict:
+        """Call Groq API with retry logic."""
         try:
-            prompt = f"""
-            Classify this email:
-            Subject: {email.subject}
-            From: {email.sender}
-            Body: {email.body[:2000]}
-            """
-            
-            result = self.agent.run(prompt)
-            return result
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=150,
+            )
+            parsed = json.loads(response.choices[0].message.content)
+            return parsed
         except Exception as e:
-            logger.error(f"Agno classification failed: {e}")
+            logger.error(f"Groq API call failed: {e}")
             raise
 
-    def classify_email(self, email: Email) -> Dict:
-        """Classify a single email using Agno with Ollama"""
+    def classify_email_text(self, email_text: str) -> Dict:
+        """Classify email text using Groq."""
         try:
-            result = self._classify_email_with_agent(email)
-            
+            user_prompt = f"""
+            Email to classify:
+            {email_text.strip()}
+            """
+
+            result = self._call_groq_api(user_prompt)
+
+            # Validate keys
+            classification = result.get("classification", "NOT_IMPORTANT").upper()
+            if classification not in ["IMPORTANT", "NOT_IMPORTANT"]:
+                raise ValueError("Invalid classification returned from model.")
+
             return {
-                "classification": result.classification,
-                "topic": result.topic,
-                "confidence": result.confidence,
-                "reasoning": result.reasoning,
+                "classification": classification,
+                "topic": result.get("topic", "No topic provided"),
+                "confidence": float(result.get("confidence", 0.0)),
+                "reasoning": result.get("reasoning", "No reasoning provided"),
                 "success": True
             }
         except Exception as e:
             logger.error(f"Failed to classify email: {e}")
-            return {
-                "classification": self.default_response.classification,
-                "topic": self.default_response.topic,
-                "confidence": self.default_response.confidence,
-                "reasoning": self.default_response.reasoning,
-                "success": False
-            }
+            return self.default_response.copy()
 
-    def classify_batch(self, emails: List[Email], batch_size: int = 5) -> List[Dict]:
+    def classify_batch(self, email_texts: List[str], batch_size: int = 5) -> List[Dict]:
         """
-        Efficiently classify a list of emails in batches.
+        Efficiently classify a list of email texts in batches.
 
         Args:
-            emails: List of Email objects.
+            email_texts: List of email text strings.
             batch_size: Number of emails per batch.
 
         Returns:
             List of classification results.
         """
-        if not emails:
+        if not email_texts:
             return []
 
         results = []
-        total_emails = len(emails)
+        total_emails = len(email_texts)
 
         for i in range(0, total_emails, batch_size):
-            batch = emails[i:i + batch_size]
+            batch = email_texts[i:i + batch_size]
             batch_num = (i // batch_size) + 1
             total_batches = (total_emails - 1) // batch_size + 1
             logger.info(f"Processing batch {batch_num}/{total_batches}")
 
-            for email in batch:
+            for email_text in batch:
                 try:
-                    result = self.classify_email(email)
+                    result = self.classify_email_text(email_text)
                     results.append(result)
                 except Exception as e:
-                    logger.error(f"Failed to classify email '{email.subject}': {e}")
-                    results.append({
-                        "classification": self.default_response.classification,
-                        "topic": self.default_response.topic,
-                        "confidence": self.default_response.confidence,
-                        "reasoning": self.default_response.reasoning,
-                        "success": False
-                    })
+                    logger.error(f"Failed to classify email: {e}")
+                    results.append(self.default_response.copy())
 
         return results
 
     def get_important_emails(
         self,
-        emails: List[Email],
+        email_texts: List[str],
         confidence_threshold: float = 0.7,
         max_results: Optional[int] = None
-    ) -> List[Tuple[Email, Dict]]:
+    ) -> List[Tuple[str, Dict]]:
         """
         Filter and return important emails based on confidence threshold.
 
         Args:
-            emails: List of Email objects.
+            email_texts: List of email text strings.
             confidence_threshold: Minimum confidence score to consider important.
             max_results: Optional limit on number of results.
 
         Returns:
-            List of (Email, classification result) tuples.
+            List of (email_text, classification result) tuples.
         """
-        if not emails:
+        if not email_texts:
             return []
 
         if not (0 <= confidence_threshold <= 1):
             raise ValueError("Confidence threshold must be between 0 and 1.")
 
-        results = self.classify_batch(emails)
+        results = self.classify_batch(email_texts)
         important_emails = [
-            (email, result)
-            for email, result in zip(emails, results)
+            (email_text, result)
+            for email_text, result in zip(email_texts, results)
             if result["classification"] == "IMPORTANT" and result["confidence"] >= confidence_threshold
         ]
 

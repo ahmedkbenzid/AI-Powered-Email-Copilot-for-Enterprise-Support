@@ -6,17 +6,19 @@ from typing import List, Tuple, Dict, Any
 from pydantic import BaseModel
 
 # RAG-Anything imports
-from raganything import RAGAnything, RAGAnythingConfig
-from lightrag.llm import ollama_model_complete
+from raganything import RAGAnything
+from lightrag.llm.ollama import ollama_model_complete
 from lightrag.utils import EmbeddingFunc
 import requests
 
+# LightRAG imports
+from lightrag import LightRAG
 # LangChain for semantic chunking
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.embeddings import OllamaEmbeddings
 
 class EmailKnowledgeGraph:
-    """Knowledge Graph for processing important emails using RAG-Anything"""
+    """Knowledge Graph for processing important emails using RAG-Anything for attachments, LightRAG for text-only"""
     
     def __init__(self, 
                  working_dir: str = "./rag_storage_neo4j",
@@ -46,6 +48,7 @@ class EmailKnowledgeGraph:
         self.embedding_model = embedding_model
         self.ollama_host = ollama_host
         self.rag = None
+        self.lightrag = None
         self.chunker = self._create_semantic_chunker()
         
         # Ensure working directory exists
@@ -92,16 +95,8 @@ class EmailKnowledgeGraph:
         return embeddings
     
     async def initialize(self):
-        """Initialize RAG-Anything with Ollama models"""
+        """Initialize RAG-Anything and LightRAG with Ollama models"""
         try:
-            # Create RAG-Anything configuration
-            config = RAGAnythingConfig(
-                working_dir=self.working_dir,
-                enable_image_processing=True,
-                enable_table_processing=False,
-                enable_equation_processing=False,
-                parser="mineru"
-            )
             
             # Define Ollama model functions
             def llm_model_func(prompt, system_prompt=None, history_messages=[], **kwargs):
@@ -141,7 +136,11 @@ class EmailKnowledgeGraph:
             
             # Initialize RAG-Anything
             self.rag = RAGAnything(
-                config=config,
+                working_dir=self.working_dir,
+                enable_image_processing=True,
+                enable_table_processing=False,
+                enable_equation_processing=False,
+                parser="mineru",
                 llm_model_func=llm_model_func,
                 vision_model_func=vision_model_func,
                 embedding_func=embedding_func,
@@ -149,8 +148,25 @@ class EmailKnowledgeGraph:
             
             print("✅ RAG-Anything initialized successfully")
             
+            # Initialize LightRAG for text-only emails
+            
+            self.lightrag = LightRAG(
+                index_path=os.path.join(self.working_dir, "lightrag_index"),
+                llm_model_func=ollama_model_complete,  # Use Ollama model for text generation
+                llm_model_name='llama3.2:3b', # Your model name
+                # Use Ollama embedding function
+                embedding_func=EmbeddingFunc(
+                    embedding_dim=768,
+                    func=lambda texts: ollama_embed(
+                        texts,
+                        embed_model="nomic-embed-text"
+                    )
+                ),
+            )
+            print("✅ LightRAG initialized successfully")
+            
         except Exception as e:
-            print(f"❌ Failed to initialize RAG-Anything: {e}")
+            print(f"❌ Failed to initialize RAG systems: {e}")
             raise
     
     def check_email_attachments(self, gmail_service, email_id: str) -> bool:
@@ -276,110 +292,144 @@ class EmailKnowledgeGraph:
     
     async def process_important_emails(self, important_emails: List[Tuple], gmail_service):
         """
-        Process important emails and add to knowledge graph using RAG-Anything
+        Process important emails and add to knowledge graph
+        - Use RAG-Anything for emails with attachments
+        - Use LightRAG for emails without attachments
         
         Args:
             important_emails: List of (Email, classification_result) tuples
             gmail_service: Authenticated Gmail service
         """
-        if not self.rag:
-            raise Exception("RAG-Anything not initialized. Call initialize() first.")
+        if not self.rag or not self.lightrag:
+            raise Exception("RAG systems not initialized. Call initialize() first.")
             
         print(f"Processing {len(important_emails)} important emails...")
         
         for i, (email, classification) in enumerate(important_emails):
             print(f"Processing email {i+1}/{len(important_emails)}: {email.subject[:50]}...")
             
-            # Prepare content list for RAG-Anything
-            content_list = []
-            
             # Check for attachments
             has_attachments = self.check_email_attachments(gmail_service, email.id) if email.id else False
             
             if has_attachments:
-                print(f"  Email has attachments - using RAG-Anything with attachment content")
-                # Extract attachment content
-                attachment_contents = self.extract_attachment_content(gmail_service, email.id)
-                
-                # Add email body as text content
-                email_chunks = self.chunker.split_text(email.body)
-                for j, chunk in enumerate(email_chunks):
-                    content_list.append({
-                        "type": "text",
-                        "text": chunk,
-                        "page_idx": 0,
-                        "metadata": {
-                            "chunk_index": j,
-                            "source": "email_body"
-                        }
-                    })
-                
-                # Add attachment content
-                for j, attachment in enumerate(attachment_contents):
-                    if attachment.get("type") == "text":
-                        content_list.append({
-                            "type": "text",
-                            "text": attachment.get("content", ""),
-                            "page_idx": 1,  # Different page for attachments
-                            "metadata": {
-                                "chunk_index": j,
-                                "source": "email_attachment",
-                                "filename": attachment.get("filename", "unknown"),
-                                "mime_type": attachment.get("mime_type", "unknown")
-                            }
-                        })
+                print(f"  Email has attachments - using RAG-Anything")
+                await self._process_with_rag_anything(email, gmail_service)
             else:
-                print(f"  Email has no attachments - using semantic chunking with RAG-Anything")
-                # Process with semantic chunking only
-                chunks = self.chunker.split_text(email.body)
-                
-                # Add each chunk to content list
-                for j, chunk in enumerate(chunks):
-                    content_list.append({
-                        "type": "text",
-                        "text": chunk,
-                        "page_idx": 0,
-                        "metadata": {
-                            "chunk_index": j,
-                            "source": "email_body"
-                        }
-                    })
-            
-            # Insert content list into RAG-Anything
-            if content_list:
-                try:
-                    await self.rag.insert_content_list(
-                        content_list=content_list,
-                        file_path=f"email_{email.id}_{email.subject[:30]}.txt",
-                        doc_id=f"email_{email.id}" if email.id else None,
-                        display_stats=True
-                    )
-                    print(f"  ✅ Added {len(content_list)} content items to knowledge graph")
-                except Exception as e:
-                    print(f"  ❌ Error inserting content list: {e}")
-            else:
-                print(f"  ⚠️  No content to add for this email")
+                print(f"  Email has no attachments - using LightRAG")
+                await self._process_with_lightrag(email)
+    
+    async def _process_with_rag_anything(self, email, gmail_service):
+        """Process email with attachments using RAG-Anything"""
+        # Prepare content list for RAG-Anything
+        content_list = []
+        
+        # Extract attachment content
+        attachment_contents = self.extract_attachment_content(gmail_service, email.id)
+        
+        # Add email body as text content
+        email_chunks = self.chunker.split_text(email.body)
+        for j, chunk in enumerate(email_chunks):
+            content_list.append({
+                "type": "text",
+                "text": chunk,
+                "page_idx": 0,
+                "metadata": {
+                    "chunk_index": j,
+                    "source": "email_body",
+                    "email_id": email.id,
+                    "subject": email.subject,
+                    "from": email.sender
+                }
+            })
+        
+        # Add attachment content
+        for j, attachment in enumerate(attachment_contents):
+            if attachment.get("type") == "text":
+                content_list.append({
+                    "type": "text",
+                    "text": attachment.get("content", ""),
+                    "page_idx": 1,  # Different page for attachments
+                    "metadata": {
+                        "chunk_index": j,
+                        "source": "email_attachment",
+                        "filename": attachment.get("filename", "unknown"),
+                        "mime_type": attachment.get("mime_type", "unknown"),
+                        "email_id": email.id
+                    }
+                })
+        
+        # Insert content list into RAG-Anything
+        if content_list:
+            try:
+                await self.rag.insert_content_list(
+                    content_list=content_list,
+                    file_path=f"email_{email.id}_{email.subject[:30]}.txt",
+                    doc_id=f"email_{email.id}" if email.id else None,
+                    display_stats=True
+                )
+                print(f"  ✅ Added {len(content_list)} content items to RAG-Anything knowledge graph")
+            except Exception as e:
+                print(f"  ❌ Error inserting content list to RAG-Anything: {e}")
+        else:
+            print(f"  ⚠️  No content to add for this email")
+    
+    async def _process_with_lightrag(self, email):
+        """Process text-only email with LightRAG"""
+        try:
+            # Add email to LightRAG index
+            await self.lightrag.add_document(
+                text=email.body,
+                metadata={
+                    "source": "email",
+                    "email_id": email.id,
+                    "subject": email.subject,
+                    "from": email.sender,
+                    "date": email.date,
+                    "classification": "important"
+                }
+            )
+            print(f"  ✅ Added email to LightRAG index")
+        except Exception as e:
+            print(f"  ❌ Error adding email to LightRAG: {e}")
     
     async def query_knowledge_graph(self, query: str, mode: str = "hybrid") -> str:
         """
-        Query the knowledge graph using RAG-Anything
+        Query the knowledge graph
         
         Args:
             query: Query string
-            mode: Query mode (hybrid, vector, kg, mix)
+            mode: Query mode (hybrid, vector, kg, mix) - for RAG-Anything
             
         Returns:
             Query response
         """
-        if not self.rag:
-            raise Exception("RAG-Anything not initialized. Call initialize() first.")
+        if not self.rag or not self.lightrag:
+            raise Exception("RAG systems not initialized. Call initialize() first.")
             
         try:
-            response = await self.rag.aquery(query, mode=mode)
-            return response
+            # First try RAG-Anything (handles both text and attachments)
+            rag_response = await self.rag.aquery(query, mode=mode)
+            
+            # Also query LightRAG for text-only emails
+            lightrag_response = await self.lightrag.query(query)
+            
+            # Combine responses (you can customize this logic)
+            combined_response = f"""
+RAG-Anything Response (with attachments):
+{rag_response}
+
+LightRAG Response (text-only emails):
+{lightrag_response}
+"""
+            return combined_response
+            
         except Exception as e:
             print(f"Error querying knowledge graph: {e}")
-            return f"Error: {str(e)}"
+            # Fallback to LightRAG only
+            try:
+                return await self.lightrag.query(query)
+            except Exception as e2:
+                return f"Error: {str(e)} (Fallback also failed: {str(e2)})"
 
 # Usage example:
 async def main():
