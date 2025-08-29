@@ -6,7 +6,7 @@ from typing import List, Tuple, Dict, Any
 from pydantic import BaseModel
 
 # RAG-Anything imports
-from raganything import RAGAnything
+from raganything import RAGAnything,RAGAnythingConfig
 from lightrag.llm.ollama import ollama_model_complete
 from lightrag.utils import EmbeddingFunc
 import requests
@@ -15,7 +15,7 @@ import requests
 from lightrag import LightRAG
 # LangChain for semantic chunking
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 class EmailKnowledgeGraph:
     """Knowledge Graph for processing important emails using RAG-Anything for attachments, LightRAG for text-only"""
@@ -111,7 +111,20 @@ class EmailKnowledgeGraph:
                         "temperature": 0.3,
                     }
                 )
-            
+            self.lightrag = LightRAG(
+                working_dir=self.working_dir,
+                llm_model_func=ollama_model_complete,  # Use Ollama model for text generation
+                llm_model_name='llama3.2:3b', # Your model name
+                # Use Ollama embedding function
+                embedding_func=EmbeddingFunc(
+                    embedding_dim=768,
+                    func=lambda texts: ollama_embed(
+                        texts,
+                        embed_model="nomic-embed-text"
+                    )
+                ),
+            )
+            print("✅ LightRAG initialized successfully")
             # Vision model function
             def vision_model_func(prompt, system_prompt=None, history_messages=[], 
                                 image_data=None, messages=None, **kwargs):
@@ -136,35 +149,12 @@ class EmailKnowledgeGraph:
             
             # Initialize RAG-Anything
             self.rag = RAGAnything(
-                working_dir=self.working_dir,
-                enable_image_processing=True,
-                enable_table_processing=False,
-                enable_equation_processing=False,
-                parser="mineru",
-                llm_model_func=llm_model_func,
+                lightrag=self.lightrag,  # Pass existing LightRAG instance
                 vision_model_func=vision_model_func,
-                embedding_func=embedding_func,
             )
             
             print("✅ RAG-Anything initialized successfully")
-            
-            # Initialize LightRAG for text-only emails
-            
-            self.lightrag = LightRAG(
-                index_path=os.path.join(self.working_dir, "lightrag_index"),
-                llm_model_func=ollama_model_complete,  # Use Ollama model for text generation
-                llm_model_name='llama3.2:3b', # Your model name
-                # Use Ollama embedding function
-                embedding_func=EmbeddingFunc(
-                    embedding_dim=768,
-                    func=lambda texts: ollama_embed(
-                        texts,
-                        embed_model="nomic-embed-text"
-                    )
-                ),
-            )
-            print("✅ LightRAG initialized successfully")
-            
+
         except Exception as e:
             print(f"❌ Failed to initialize RAG systems: {e}")
             raise
