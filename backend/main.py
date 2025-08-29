@@ -9,6 +9,7 @@ import asyncio
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,6 +58,7 @@ class ProcessingStatus(BaseModel):
 class TextClassificationRequest(BaseModel):
     """Request model for text classification"""
     text: str = Field(description="Text to classify")
+load_dotenv()  # loads from .env
 
 def load_config() -> Dict:
     """Load configuration from environment variables"""
