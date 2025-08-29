@@ -21,6 +21,7 @@ gmail_agent = None
 classifier = None
 knowledge_graph = None
 config = None
+chatbot_agent = None
 
 # Pydantic models for API
 class ClassificationResult(BaseModel):
@@ -58,6 +59,19 @@ class ProcessingStatus(BaseModel):
 class TextClassificationRequest(BaseModel):
     """Request model for text classification"""
     text: str = Field(description="Text to classify")
+
+# NEW: Add AskRequest model for chatbot
+class AskRequest(BaseModel):
+    """Request model for chatbot questions"""
+    question: str = Field(description="Question to ask about emails")
+    user_id: Optional[str] = Field(default=None, description="Optional user ID")
+
+class AskResponse(BaseModel):
+    """Response model for chatbot answers"""
+    answer: str = Field(description="Generated answer")
+    success: bool = Field(description="Success status")
+    error_message: Optional[str] = Field(default=None, description="Error message if any")
+
 load_dotenv()  # loads from .env
 
 def load_config() -> Dict:
@@ -80,7 +94,7 @@ def load_config() -> Dict:
 
 async def initialize_services():
     """Initialize all services"""
-    global gmail_agent, classifier, knowledge_graph, config
+    global gmail_agent, classifier, knowledge_graph, config, chatbot_agent
     
     config = load_config()
     
@@ -123,6 +137,15 @@ async def initialize_services():
         except Exception as e:
             print(f"Warning: Knowledge graph initialization failed: {e}")
             knowledge_graph = None
+    
+    # NEW: Initialize chatbot agent
+    try:
+        from agents.chatbot import ChatbotAgent
+        chatbot_agent = ChatbotAgent()
+        print("✅ Chatbot agent initialized successfully")
+    except Exception as e:
+        print(f"Warning: Chatbot agent initialization failed: {e}")
+        chatbot_agent = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -160,7 +183,8 @@ async def root():
         "services": {
             "gmail_agent": gmail_agent is not None,
             "classifier": classifier is not None,
-            "knowledge_graph": knowledge_graph is not None
+            "knowledge_graph": knowledge_graph is not None,
+            "chatbot_agent": chatbot_agent is not None
         }
     }
 
@@ -172,9 +196,54 @@ async def health_check():
         "gmail_agent": gmail_agent is not None,
         "classifier": classifier is not None,
         "knowledge_graph": knowledge_graph is not None,
+        "chatbot_agent": chatbot_agent is not None,
         "knowledge_graph_enabled": config['enable_knowledge_graph'] if config else False
     }
     return health_status
+
+# NEW: Add /ask endpoint for chatbot
+@app.post("/ask", response_model=AskResponse)
+async def ask_question(request: AskRequest):
+    """
+    Ask questions about emails using the knowledge graph chatbot
+    """
+    try:
+        if not chatbot_agent:
+            raise HTTPException(status_code=503, detail="Chatbot service not initialized")
+        
+        if not knowledge_graph:
+            raise HTTPException(
+                status_code=400, 
+                detail="Knowledge graph is required for chatbot functionality. Process some emails first."
+            )
+        
+        if not request.question.strip():
+            raise HTTPException(status_code=400, detail="Question cannot be empty")
+        
+        print(f"🤖 Processing chatbot question: {request.question}")
+        
+        # Use the chatbot agent to answer the question
+        answer = await chatbot_agent.answer_user_question(
+            rag=knowledge_graph,
+            question=request.question
+        )
+        
+        return AskResponse(
+            answer=answer,
+            success=True,
+            error_message=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Error processing question: {str(e)}"
+        print(f"❌ {error_msg}")
+        return AskResponse(
+            answer="I'm sorry, I encountered an error processing your question. Please try again.",
+            success=False,
+            error_message=error_msg
+        )
 
 @app.post("/emails/fetch-and-classify")
 async def fetch_and_classify_emails(request: EmailFetchRequest):
