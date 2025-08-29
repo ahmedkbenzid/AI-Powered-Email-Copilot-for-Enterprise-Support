@@ -60,9 +60,8 @@ class TextClassificationRequest(BaseModel):
 
 def load_config() -> Dict:
     """Load configuration from environment variables"""
-    GROQ_API_KEY="REDACTED"
     return {
-        'groq_api_key': GROQ_API_KEY,
+        'groq_api_key': os.getenv('GROQ_API_KEY'),
         'gmail_credentials': os.getenv('GMAIL_CREDENTIALS_FILE', 'credentials.json'),
         'gmail_token': os.getenv('GMAIL_TOKEN_FILE', 'token.pickle'),
         'confidence_threshold': float(os.getenv('CONFIDENCE_THRESHOLD', '0.7')),
