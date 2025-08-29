@@ -7,9 +7,9 @@ groq
 google-auth-oauthlib==0.4.6
 google-auth-httplib2==0.1.0
 google-api-python-client==2.0.2
-tenacity==8.2.2
-agno-agent==0.1.0
-pydantic==2.5.0
+tenacity
+agno
+pydantic
 requests
 raganything
 langchain-experimental
@@ -17,4 +17,3 @@ langchain-ollama
 ollama
 fastapi
 uvicorn
-python-dotenv
