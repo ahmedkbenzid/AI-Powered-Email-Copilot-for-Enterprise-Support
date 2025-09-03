@@ -222,12 +222,12 @@ async def ask_question(request: AskRequest):
         
         print(f"🤖 Processing chatbot question: {request.question}")
         
+
         # Use the chatbot agent to answer the question
         answer = await chatbot_agent.answer_user_question(
-            rag=knowledge_graph,
+            rag=knowledge_graph.lightrag,
             question=request.question
         )
-        
         return AskResponse(
             answer=answer,
             success=True,

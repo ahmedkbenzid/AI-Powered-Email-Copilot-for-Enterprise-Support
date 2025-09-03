@@ -1,9 +1,9 @@
-# chatbot.py (input: user_question + rag_system, output: answers)
+# chatbot.py (input: user_question + knowledge_graph, output: answers)
 import logging
 from typing import List, Dict, Optional
 from lightrag import LightRAG, QueryParam
-from agents.filtering import Email
-
+from agents.gmail_agent import Email
+from agents.graph import EmailKnowledgeGraph
 class ChatbotAgent:
     """Agent for answering questions about emails stored in the knowledge graph."""
     
@@ -33,15 +33,19 @@ class ChatbotAgent:
             str: Generated answer to the user's question
         """
         try:
-            # Use RAG to query the knowledge graph
-            response = await rag.generate(
-                query=question,
-                system_prompt=self.system_prompt,
-                query_param=QueryParam(mode="mix")
-            )
             
-            return response.strip()
+
+            mode = "mix"
+            resp = await rag.aquery(
+                    query=question,
+                    system_prompt=self.system_prompt,
+                    param=QueryParam(mode=mode)
+                )
+            print(resp)
+            
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.logger.error(f"Error answering user question: {e}")
             return "I encountered an error processing your question. Please try again."

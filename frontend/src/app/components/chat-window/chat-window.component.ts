@@ -30,7 +30,7 @@ export class ChatWindowComponent implements OnInit, AfterViewChecked {
   userMessage: string = '';
   isTyping: boolean = false;
   apiBaseUrl: string = 'http://localhost:8000';
-  
+
   constructor(private http: HttpClient) {}
   
   ngOnInit() {

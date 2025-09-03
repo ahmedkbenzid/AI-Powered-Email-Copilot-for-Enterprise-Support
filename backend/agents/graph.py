@@ -118,11 +118,12 @@ class EmailKnowledgeGraph:
                 # Use Ollama embedding function
                 embedding_func=EmbeddingFunc(
                     embedding_dim=768,
-                    func=lambda texts: ollama_embed(
+                    func=lambda texts: self._ollama_embed(
                         texts,
                         embed_model="nomic-embed-text"
                     )
                 ),
+                enable_llm_cache=False
             )
             print("✅ LightRAG initialized successfully")
             # Vision model function
